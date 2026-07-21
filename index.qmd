@@ -1,0 +1,190 @@
+---
+title: "Address → Map → Census data"
+format: html
+editor: visual
+execute:
+  echo: false
+runtime: shiny
+---
+
+```{r}
+# Install missing packages (uncomment if you want automatic installs - optional)
+# pkgs <- c("shiny","leaflet","httr","jsonlite","tidycensus","dplyr","tidyr","DT","shinycssloaders","sf")
+# missing <- pkgs[!(pkgs %in% installed.packages()[,"Package"])]
+# if(length(missing)) install.packages(missing)
+```
+
+```{r setup}
+library(shiny)
+library(leaflet)
+library(httr)
+library(jsonlite)
+library(tidycensus)
+library(dplyr)
+library(tidyr)
+library(DT)
+library(shinycssloaders)
+library(sf)
+
+# load helper functions
+source("R/helpers.R")
+```
+
+UI
+```{r}
+fluidPage(
+  titlePanel("Address → Map → Census data"),
+  sidebarLayout(
+    sidebarPanel(
+      textInput("address", "Type an address (one line):", value = "1600 Pennsylvania Ave NW, Washington, DC 20500"),
+      actionButton("go", "Locate address"),
+      br(),
+      br(),
+      helpText("This app geocodes the address using the US Census Geocoder and pulls ACS variables for the containing Census tract using tidycensus."),
+      helpText("Set your Census API key before running (see README).")
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Map",
+                 withSpinner(leafletOutput("map", height = "600px"))),
+        tabPanel("Census summary",
+                 br(),
+                 withSpinner(tableOutput("summary")),
+                 br(),
+                 h4("Raw ACS data"),
+                 withSpinner(DTOutput("acs_table"))
+        ),
+        tabPanel("Raw geocode result",
+                 verbatimTextOutput("raw"))
+      )
+    )
+  )
+)
+```
+
+Server
+```{r}
+function(input, output, session) {
+
+  # Reactive to hold the geocode + ACS results
+  state <- reactiveValues(result = NULL, acs = NULL, tract_geom = NULL)
+
+  observeEvent(input$go, {
+    addr <- input$address
+    if(nchar(trimws(addr)) == 0) return()
+
+    # Geocode via Census Geocoder
+    geocode_res <- tryCatch({
+      geocode_census(addr)
+    }, error = function(e) {
+      showNotification(paste("Geocode error:", e$message), type = "error")
+      return(NULL)
+    })
+
+    if(is.null(geocode_res) || is.null(geocode_res$addressMatches) || length(geocode_res$addressMatches) == 0) {
+      showNotification("No geocode match found.", type = "warning")
+      state$result <- NULL
+      return()
+    }
+
+    match <- geocode_res$addressMatches[[1]]
+    # coordinates
+    lon <- as.numeric(match$coordinates$x)
+    lat <- as.numeric(match$coordinates$y)
+    formatted <- match$matchedAddress
+
+    # get tract GEOID if available
+    tract_geoid <- NA_character_
+    state_fips <- NA_character_
+    county_fips <- NA_character_
+    tract_code <- NA_character_
+    if(!is.null(match$geographies$`Census Tracts`)) {
+      ct <- match$geographies$`Census Tracts`[[1]]
+      tract_geoid <- ct$GEOID
+      # GEOID is 11-digit: state(2) + county(3) + tract(6)
+      if(!is.null(tract_geoid) && nchar(tract_geoid) >= 11) {
+        state_fips <- substr(tract_geoid, 1, 2)
+        county_fips <- substr(tract_geoid, 3, 5)
+        tract_code <- substr(tract_geoid, 6, 11)
+      }
+    }
+
+    state$result <- list(lat = lat, lon = lon, formatted = formatted, geocode = match, tract_geoid = tract_geoid, state_fips = state_fips, county_fips = county_fips, tract_code = tract_code)
+
+    # If we have tract GEOID, fetch ACS variables (with geometry for map overlay)
+    if(!is.na(tract_geoid) && !is.na(state_fips) && !is.na(county_fips) && !is.na(tract_code)) {
+      # variables to fetch
+      vars <- c(
+        total_pop = "B01003_001",
+        median_income = "B19013_001",
+        median_age = "B01002_001",
+        white = "B02001_002",
+        black = "B02001_003",
+        asian = "B02001_005",
+        hispanic = "B03002_012"
+      )
+      acs_data <- tryCatch({
+        get_acs_for_tract(state_fips, county_fips, tract_code, vars)
+      }, error = function(e) {
+        showNotification(paste("ACS fetch error:", e$message), type = "error")
+        return(NULL)
+      })
+
+      state$acs <- acs_data$summary_table
+      state$tract_geom <- acs_data$geometry
+    } else {
+      state$acs <- NULL
+      state$tract_geom <- NULL
+    }
+
+  })
+
+  # Map output
+  output$map <- renderLeaflet({
+    req(state$result)
+    lat <- state$result$lat
+    lon <- state$result$lon
+    formatted <- state$result$formatted
+
+    m <- leaflet() %>%
+      addTiles() %>%
+      setView(lng = lon, lat = lat, zoom = 16) %>%
+      addMarkers(lng = lon, lat = lat, popup = formatted)
+
+    # add tract polygon if available
+    if(!is.null(state$tract_geom) && inherits(state$tract_geom, "sf")) {
+      m <- m %>%
+        addPolygons(data = st_transform(state$tract_geom, 4326),
+                    color = "blue",
+                    weight = 2,
+                    fill = FALSE,
+                    popup = paste0("Tract: ", state$result$tract_geoid))
+    }
+    m
+  })
+
+  # Summary table (key metrics)
+  output$summary <- renderTable({
+    req(state$acs)
+    # create a concise key-value summary
+    df <- state$acs %>%
+      select(metric, estimate) %>%
+      mutate(estimate = ifelse(metric %in% c("white","black","asian","hispanic"), paste0(round(estimate,0)), as.character(round(estimate,0)))) %>%
+      rename("Metric" = metric, "Estimate" = estimate)
+    df
+  }, striped = TRUE, hover = TRUE)
+
+  # Full ACS data table
+  output$acs_table <- renderDT({
+    req(state$acs)
+    dat <- state$acs %>% mutate(estimate = round(estimate,0), moe = round(moe,0))
+    datatable(dat, options = list(pageLength = 10))
+  })
+
+  output$raw <- renderPrint({
+    req(state$result)
+    str(state$result$geocode, max.level = 2)
+  })
+
+}
+```
