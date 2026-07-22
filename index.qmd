@@ -1,24 +1,19 @@
 ---
 title: "Address → Map → Census data"
 format: html
-editor: visual
+runtime: shiny
 execute:
   echo: false
-runtime: shiny
 ---
 
-```{r}
-# Install missing packages (uncomment if you want automatic installs - optional)
-# pkgs <- c("shiny","leaflet","httr","jsonlite","tidycensus","dplyr","tidyr","DT","shinycssloaders","sf")
-# missing <- pkgs[!(pkgs %in% installed.packages()[,"Package"])]
-# if(length(missing)) install.packages(missing)
-```
-
-```{r setup}
+```{r setup, include=FALSE}
+# Load libraries and helpers (do not print)
+# Use library() so Shiny has access; include=FALSE prevents Quarto from echoing or showing output
 library(shiny)
 library(leaflet)
 library(httr)
 library(jsonlite)
+# tidycensus may require an API key; loading the package is usually fast
 library(tidycensus)
 library(dplyr)
 library(tidyr)
@@ -26,13 +21,13 @@ library(DT)
 library(shinycssloaders)
 library(sf)
 
-# load helper functions
+# Source helper functions (helpers should not print)
 source("R/helpers.R")
 ```
 
-UI
-```{r}
-fluidPage(
+```{r ui, echo=FALSE, include=FALSE}
+# Define the UI (not echoed or printed in the rendered document)
+ui <- fluidPage(
   titlePanel("Address → Map → Census data"),
   sidebarLayout(
     sidebarPanel(
@@ -62,9 +57,9 @@ fluidPage(
 )
 ```
 
-Server
-```{r}
-function(input, output, session) {
+```{r server, echo=FALSE, include=FALSE}
+# Server function (not echoed)
+server <- function(input, output, session) {
 
   # Reactive to hold the geocode + ACS results
   state <- reactiveValues(result = NULL, acs = NULL, tract_geom = NULL)
@@ -130,8 +125,14 @@ function(input, output, session) {
         return(NULL)
       })
 
-      state$acs <- acs_data$summary_table
-      state$tract_geom <- acs_data$geometry
+      if(!is.null(acs_data)){
+        state$acs <- acs_data$summary_table
+        state$tract_geom <- acs_data$geometry
+      } else {
+        state$acs <- NULL
+        state$tract_geom <- NULL
+      }
+
     } else {
       state$acs <- NULL
       state$tract_geom <- NULL
@@ -153,8 +154,10 @@ function(input, output, session) {
 
     # add tract polygon if available
     if(!is.null(state$tract_geom) && inherits(state$tract_geom, "sf")) {
+      # ensure geometry is in WGS84
+      geom <- tryCatch({ st_transform(state$tract_geom, 4326) }, error = function(e) state$tract_geom)
       m <- m %>%
-        addPolygons(data = st_transform(state$tract_geom, 4326),
+        addPolygons(data = geom,
                     color = "blue",
                     weight = 2,
                     fill = FALSE,
@@ -187,4 +190,10 @@ function(input, output, session) {
   })
 
 }
+```
+
+```{r run, include=FALSE}
+# Launch the app when the document is run as a Shiny app
+# Using shinyApp explicitly prevents Quarto from printing code or attempting to render the chunks
+shiny::shinyApp(ui = ui, server = server)
 ```
