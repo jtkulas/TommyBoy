@@ -7,13 +7,14 @@ execute:
 ---
 
 ```{r setup, include=FALSE}
+# Prevent code echo/output in the rendered document
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
 # Load libraries and helpers (do not print)
-# Use library() so Shiny has access; include=FALSE prevents Quarto from echoing or showing output
 library(shiny)
 library(leaflet)
 library(httr)
 library(jsonlite)
-# tidycensus may require an API key; loading the package is usually fast
 library(tidycensus)
 library(dplyr)
 library(tidyr)
@@ -25,7 +26,7 @@ library(sf)
 source("R/helpers.R")
 ```
 
-```{r ui, echo=FALSE, include=FALSE}
+```{r ui, include=FALSE}
 # Define the UI (not echoed or printed in the rendered document)
 ui <- fluidPage(
   titlePanel("Address → Map → Census data"),
@@ -57,7 +58,7 @@ ui <- fluidPage(
 )
 ```
 
-```{r server, echo=FALSE, include=FALSE}
+```{r server, include=FALSE}
 # Server function (not echoed)
 server <- function(input, output, session) {
 
@@ -192,8 +193,3 @@ server <- function(input, output, session) {
 }
 ```
 
-```{r run, include=FALSE}
-# Launch the app when the document is run as a Shiny app
-# Using shinyApp explicitly prevents Quarto from printing code or attempting to render the chunks
-shiny::shinyApp(ui = ui, server = server)
-```
