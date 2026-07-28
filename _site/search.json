@@ -1,0 +1,9 @@
+[
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Address → Map → Census data",
+    "section": "",
+    "text": "Warning: package 'shiny' was built under R version 4.5.3\n\n\nWarning: package 'leaflet' was built under R version 4.5.1\n\n\nWarning: package 'httr' was built under R version 4.5.2\n\n\n\nAttaching package: 'jsonlite'\n\n\nThe following object is masked from 'package:shiny':\n\n    validate\n\n\nWarning: package 'tidycensus' was built under R version 4.5.3\n\n\nWarning: package 'dplyr' was built under R version 4.5.2\n\n\n\nAttaching package: 'dplyr'\n\n\nThe following objects are masked from 'package:stats':\n\n    filter, lag\n\n\nThe following objects are masked from 'package:base':\n\n    intersect, setdiff, setequal, union\n\n\nWarning: package 'tidyr' was built under R version 4.5.2\n\n\n\nAttaching package: 'DT'\n\n\nThe following objects are masked from 'package:shiny':\n\n    dataTableOutput, renderDataTable\n\n\nWarning: package 'shinycssloaders' was built under R version 4.5.3\n\n\nWarning: package 'sf' was built under R version 4.5.2\n\n\nLinking to GEOS 3.13.1, GDAL 3.11.4, PROJ 9.7.0; sf_use_s2() is TRUE"
+  }
+]
