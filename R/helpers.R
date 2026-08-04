@@ -62,7 +62,7 @@ fetch_acs_population <- function(tract_geoid, year = 2021, key = Sys.getenv("CEN
 
   base <- sprintf("https://api.census.gov/data/%s/acs/acs5", as.character(year))
   # Request total population (B01003_001) and NAME
-  query <- list(get = "B01003_001,NAME", for = paste0("tract:", tract), in = paste0("state:", state, "+county:", county))
+  query <- list(get = "B01003_001,NAME", `for` = paste0("tract:", tract), `in` = paste0("state:", state, "+county:", county))
   if (nzchar(key)) query$key <- key
 
   resp <- tryCatch({
