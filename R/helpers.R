@@ -8,21 +8,26 @@ geocode_census_one <- function(address, benchmark = "Public_AR_Current", timeout
   if (missing(address) || nchar(trimws(address)) == 0) return(list(status = "error", message = "empty address"))
   base <- "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 
-  resp <- tryCatch(
+  resp <- tryCatch({
     httr::GET(
       url = base,
       query = list(address = address, benchmark = benchmark, format = "json"),
       httr::user_agent("TommyBoy/1.0 (geocode_census_one)"),
       httr::timeout(timeout_seconds)
-    ),
-    error = function(e) return(list(status = "error", message = paste0("HTTP error: ", e$message)))
-  )
+    )
+  }, error = function(e) {
+    list(status = "error", message = paste0("HTTP error: ", e$message))
+  })
 
   if (is.list(resp) && !inherits(resp, "response")) return(resp)
   if (httr::status_code(resp) != 200) return(list(status = "error", message = paste0("HTTP status ", httr::status_code(resp))))
 
   txt <- httr::content(resp, as = "text", encoding = "UTF-8")
-  parsed <- tryCatch(jsonlite::fromJSON(txt, simplifyVector = FALSE), error = function(e) NULL)
+  parsed <- tryCatch({
+    jsonlite::fromJSON(txt, simplifyVector = FALSE)
+  }, error = function(e) {
+    NULL
+  })
   if (is.null(parsed)) return(list(status = "error", message = "JSON parse error"))
 
   matches <- parsed$result$addressMatches
@@ -60,12 +65,20 @@ fetch_acs_population <- function(tract_geoid, year = 2021, key = Sys.getenv("CEN
   query <- list(get = "B01003_001,NAME", for = paste0("tract:", tract), in = paste0("state:", state, "+county:", county))
   if (nzchar(key)) query$key <- key
 
-  resp <- tryCatch(httr::GET(base, query = query, httr::timeout(15)), error = function(e) return(list(status = "error", message = paste0("HTTP error: ", e$message))))
+  resp <- tryCatch({
+    httr::GET(base, query = query, httr::timeout(15))
+  }, error = function(e) {
+    list(status = "error", message = paste0("HTTP error: ", e$message))
+  })
   if (is.list(resp) && !inherits(resp, "response")) return(resp)
   if (httr::status_code(resp) != 200) return(list(status = "error", message = paste0("Census API status: ", httr::status_code(resp))))
 
   txt <- httr::content(resp, as = "text", encoding = "UTF-8")
-  parsed <- tryCatch(jsonlite::fromJSON(txt, simplifyVector = TRUE), error = function(e) NULL)
+  parsed <- tryCatch({
+    jsonlite::fromJSON(txt, simplifyVector = TRUE)
+  }, error = function(e) {
+    NULL
+  })
   if (is.null(parsed) || length(parsed) < 2) return(list(status = "error", message = "Census API returned no data"))
 
   # parsed is a matrix-like: first row header, second row values
