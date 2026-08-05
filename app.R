@@ -1,5 +1,6 @@
 # app.R - standalone Shiny app that geocodes an address, shows it on a leaflet map,
 # displays lat/lon, matched address, and a small Census tract population (if available).
+# Added: on-screen hint and modal + input to set CENSUS_API_KEY in-session and re-run tract lookup.
 
 library(shiny)
 library(leaflet)
@@ -19,6 +20,14 @@ ui <- fluidPage(
       verbatimTextOutput("latlon", placeholder = TRUE),
       verbatimTextOutput("matched", placeholder = TRUE),
       verbatimTextOutput("tract_info", placeholder = TRUE),
+      br(),
+      tags$div(
+        tags$small("If the app reports \"Census key not set\" for tract info, you can add a Census API key here: "),
+        actionButton("set_key_btn", "Set Census API key"),
+        tags$br(),
+        tags$small("Get a free Census API key: "),
+        tags$a(href = "https://api.census.gov/data/key_signup.html", "Census API key signup", target = "_blank")
+      ),
       br(),
       tags$small("Debug log:"),
       verbatimTextOutput("debug", placeholder = TRUE)
@@ -66,7 +75,7 @@ server <- function(input, output, session) {
     if (!is.null(v$status) && v$status == "ok") {
       paste0("Tract GEOID: ", v$geoid, "\nPopulation (ACS5): ", v$population, "\nName: ", v$name)
     } else if (!is.null(v$status) && v$status == "no_key") {
-      paste0("Tract GEOID: ", v$geoid, " (Census key not set; population not fetched)")
+      paste0("Tract GEOID: ", v$geoid, " (Census key not set; population not fetched). Click 'Set Census API key' to enter a key and fetch.")
     } else {
       paste0("Tract lookup: ", v$message)
     }
@@ -97,6 +106,22 @@ server <- function(input, output, session) {
     return(NULL)
   }
 
+  # Helper to attempt tract population fetch if geoid present and key available
+  try_fetch_tract <- function(tract_geoid) {
+    if (is.null(tract_geoid)) return(NULL)
+    key <- Sys.getenv("CENSUS_API_KEY", "")
+    if (!nzchar(key)) {
+      tract_val(list(status = "no_key", geoid = tract_geoid))
+      return(NULL)
+    }
+    pop_res <- fetch_acs_population(tract_geoid, year = 2021, key = key)
+    if (!is.null(pop_res) && is.list(pop_res) && identical(pop_res$status, "ok")) {
+      tract_val(list(status = "ok", geoid = tract_geoid, population = pop_res$population, name = pop_res$name))
+    } else {
+      tract_val(list(status = "error", message = if (!is.null(pop_res$message)) pop_res$message else "Census fetch failed", geoid = tract_geoid))
+    }
+  }
+
   observeEvent(input$go, {
     addr <- trimws(input$address)
     log("Locate button clicked. Address:", addr)
@@ -119,18 +144,7 @@ server <- function(input, output, session) {
       tract_geoid <- extract_tract_geoid(res_obj$raw)
       if (!is.null(tract_geoid)) {
         log(paste0("Found tract GEOID: ", tract_geoid))
-        # Try to fetch population via Census API if key is present
-        key <- Sys.getenv("CENSUS_API_KEY", "")
-        if (nzchar(key)) {
-          pop_res <- fetch_acs_population(tract_geoid, year = 2021, key = key)
-          if (!is.null(pop_res) && is.list(pop_res) && identical(pop_res$status, "ok")) {
-            tract_val(list(status = "ok", geoid = tract_geoid, population = pop_res$population, name = pop_res$name))
-          } else {
-            tract_val(list(status = "error", message = if (!is.null(pop_res$message)) pop_res$message else "Census fetch failed", geoid = tract_geoid))
-          }
-        } else {
-          tract_val(list(status = "no_key", geoid = tract_geoid))
-        }
+        try_fetch_tract(tract_geoid)
       } else {
         tract_val(list(status = "nomatch", message = "No tract GEOID in geocoder response"))
       }
@@ -154,6 +168,40 @@ server <- function(input, output, session) {
 
     log("All geocoding attempts failed.")
     showNotification("No geocode result.", type = "warning")
+  })
+
+  # Modal for setting Census API key
+  observeEvent(input$set_key_btn, {
+    showModal(modalDialog(
+      title = "Set Census API key",
+      tagList(
+        tags$p("If you have a Census API key, paste it here to allow fetching ACS tract data (population, name). This sets the key for the current R session."),
+        tags$p(tags$a(href = "https://api.census.gov/data/key_signup.html", "Get a free Census API key", target = "_blank")),
+        textInput("census_key_input", "Paste Census API key:"),
+        tags$small("After saving the key, any displayed tract GEOID will attempt to fetch population automatically.")
+      ),
+      footer = tagList(actionButton("save_census_key", "Save key and fetch"), modalButton("Cancel")),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$save_census_key, {
+    key_val <- input$census_key_input
+    if (!is.null(key_val) && nzchar(trimws(key_val))) {
+      Sys.setenv(CENSUS_API_KEY = trimws(key_val))
+      log("Census API key set in session.")
+      removeModal()
+      showNotification("Census API key set in this R session.", type = "message")
+
+      # If we have a tract GEOID displayed with no_key or error, try fetching now
+      current_tract <- tract_val()
+      if (!is.null(current_tract) && !is.null(current_tract$geoid)) {
+        log(paste0("Attempting to fetch population for GEOID: ", current_tract$geoid))
+        try_fetch_tract(current_tract$geoid)
+      }
+    } else {
+      showNotification("No key entered.", type = "warning")
+    }
   })
 
   # initial message
