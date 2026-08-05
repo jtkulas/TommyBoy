@@ -1,6 +1,6 @@
 # app.R - standalone Shiny app that geocodes an address, shows it on a leaflet map,
 # displays lat/lon, matched address, and a small Census tract population (if available).
-# Added: on-screen hint and modal + input to set CENSUS_API_KEY in-session and re-run tract lookup.
+# Updated: show ACS 'NAME' (pop$name) when available; attempt coords->geographies fallback when needed.
 
 library(shiny)
 library(leaflet)
@@ -19,6 +19,7 @@ ui <- fluidPage(
       br(),
       verbatimTextOutput("latlon", placeholder = TRUE),
       verbatimTextOutput("matched", placeholder = TRUE),
+      verbatimTextOutput("pop_name", placeholder = TRUE),
       verbatimTextOutput("tract_info", placeholder = TRUE),
       br(),
       tags$div(
@@ -58,6 +59,7 @@ server <- function(input, output, session) {
   latlon_val <- reactiveVal(NULL)
   matched_val <- reactiveVal(NULL)
   tract_val <- reactiveVal(NULL)
+  pop_name_val <- reactiveVal(NULL)
 
   output$latlon <- renderText({
     v <- latlon_val()
@@ -68,6 +70,11 @@ server <- function(input, output, session) {
     v <- matched_val()
     if (is.null(v)) return("matched: -")
     paste0("matched: ", v)
+  })
+  output$pop_name <- renderText({
+    v <- pop_name_val()
+    if (is.null(v)) return("Place name (ACS NAME): -")
+    paste0("Place name (ACS NAME): ", v)
   })
   output$tract_info <- renderText({
     v <- tract_val()
@@ -95,7 +102,7 @@ server <- function(input, output, session) {
     list(lat = as.numeric(d$lat), lon = as.numeric(d$lon), label = d$display_name, raw = d)
   }
 
-  # Extract tract GEOID from the 'raw' match object returned by Census geocoder
+  # Extract tract GEOID from the 'raw' match object returned by Census geocoder - fallback to coords geographies
   extract_tract_geoid <- function(raw_match) {
     if (is.null(raw_match)) return(NULL)
     geogs <- raw_match$geographies
@@ -108,6 +115,7 @@ server <- function(input, output, session) {
 
   # Helper to attempt tract population fetch if geoid present and key available
   try_fetch_tract <- function(tract_geoid) {
+    pop_name_val(NULL)
     if (is.null(tract_geoid)) return(NULL)
     key <- Sys.getenv("CENSUS_API_KEY", "")
     if (!nzchar(key)) {
@@ -117,8 +125,11 @@ server <- function(input, output, session) {
     pop_res <- fetch_acs_population(tract_geoid, year = 2021, key = key)
     if (!is.null(pop_res) && is.list(pop_res) && identical(pop_res$status, "ok")) {
       tract_val(list(status = "ok", geoid = tract_geoid, population = pop_res$population, name = pop_res$name))
+      pop_name_val(pop_res$name)
     } else {
       tract_val(list(status = "error", message = if (!is.null(pop_res$message)) pop_res$message else "Census fetch failed", geoid = tract_geoid))
+      # if pop_res has a name even when status != ok, try to display it
+      if (!is.null(pop_res$name)) pop_name_val(pop_res$name)
     }
   }
 
@@ -136,14 +147,27 @@ server <- function(input, output, session) {
       log(paste0("Census geocoder returned:lat=", res_obj$lat, " lon=", res_obj$lon, " label=", res_obj$label))
       latlon_val(list(lat = res_obj$lat, lon = res_obj$lon))
       matched_val(res_obj$label)
+      pop_name_val(NULL)
 
       # Update map
       leafletProxy("map") %>% clearMarkers() %>% addMarkers(lng = res_obj$lon, lat = res_obj$lat, popup = res_obj$label) %>% setView(lng = res_obj$lon, lat = res_obj$lat, zoom = 16)
 
-      # Try to extract tract GEOID and fetch population if possible
+      # Try to extract tract GEOID from raw response
       tract_geoid <- extract_tract_geoid(res_obj$raw)
+      if (is.null(tract_geoid)) {
+        # fallback: call coordinates->geographies to obtain tracts
+        geo_res <- tryCatch(geographies_for_coords(lat = res_obj$lat, lon = res_obj$lon), error = function(e) list(status = "error", message = e$message))
+        if (!is.null(geo_res) && is.list(geo_res) && identical(geo_res$status, "ok")) {
+          if (!is.null(geo_res$geographies$`Census Tracts`) && length(geo_res$geographies$`Census Tracts`) > 0) {
+            tract_geoid <- geo_res$geographies$`Census Tracts`[[1]]$GEOID
+            log(paste0("Found tract GEOID via coords->geographies: ", tract_geoid))
+          }
+        } else {
+          log(paste0("coords->geographies lookup failed: ", if (!is.null(geo_res$message)) geo_res$message else "unknown"))
+        }
+      }
+
       if (!is.null(tract_geoid)) {
-        log(paste0("Found tract GEOID: ", tract_geoid))
         try_fetch_tract(tract_geoid)
       } else {
         tract_val(list(status = "nomatch", message = "No tract GEOID in geocoder response"))
@@ -161,6 +185,7 @@ server <- function(input, output, session) {
       latlon_val(list(lat = res_nom$lat, lon = res_nom$lon))
       matched_val(res_nom$label)
       tract_val(NULL)
+      pop_name_val(NULL)
       leafletProxy("map") %>% clearMarkers() %>% addMarkers(lng = res_nom$lon, lat = res_nom$lat, popup = res_nom$label) %>% setView(lng = res_nom$lon, lat = res_nom$lat, zoom = 16)
       showNotification("Location found (fallback) and map updated.", type = "message")
       return()
